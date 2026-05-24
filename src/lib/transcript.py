@@ -362,6 +362,23 @@ def fetch_transcript(
     if youtube_transcript:
         return youtube_transcript
 
+    metadata = fetch_youtube_metadata(video_id)
+    track = _choose_caption_track(metadata["caption_tracks"])
+    if track:
+        transcript_url = _ensure_json3(track["baseUrl"])
+        payload = _fetch_json_or_xml(transcript_url)
+        entries = _extract_transcript_entries(payload)
+        transcript_text = clean_transcript_text(" ".join(entry["text"] for entry in entries))
+
+        if transcript_text:
+            return {
+                "title": metadata["title"],
+                "track": track,
+                "entries": entries,
+                "transcript_text": transcript_text,
+                "source": "youtube_caption_fallback",
+            }
+
     audio_fallback = _fetch_with_audio_fallback(
         youtube_url=youtube_url,
         openai_api_key=openai_api_key,
@@ -370,23 +387,4 @@ def fetch_transcript(
     if audio_fallback:
         return audio_fallback
 
-    metadata = fetch_youtube_metadata(video_id)
-    track = _choose_caption_track(metadata["caption_tracks"])
-    if not track:
-        raise RuntimeError("No transcript track found for this video")
-
-    transcript_url = _ensure_json3(track["baseUrl"])
-    payload = _fetch_json_or_xml(transcript_url)
-    entries = _extract_transcript_entries(payload)
-    transcript_text = clean_transcript_text(" ".join(entry["text"] for entry in entries))
-
-    if not transcript_text:
-        raise RuntimeError("Transcript was empty")
-
-    return {
-        "title": metadata["title"],
-        "track": track,
-        "entries": entries,
-        "transcript_text": transcript_text,
-        "source": "youtube_caption_fallback",
-    }
+    raise RuntimeError("No transcript track found for this video")

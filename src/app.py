@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import threading
+import time
 
 from src.lib.telegram import TelegramClient, build_inline_keyboard, send_long_message
 from src.lib.transcript import fetch_transcript
@@ -193,8 +195,33 @@ def send_expression_deep_dive(*, config, db, bot: TelegramClient, chat_id, card:
     return expression
 
 
+def start_progress_notifier(bot: TelegramClient, chat_id, stop_event: threading.Event, stages: list[tuple[int, str]]):
+    def run():
+        for delay, message in stages:
+            if stop_event.wait(delay):
+                return
+            try:
+                send(bot, chat_id, message)
+            except Exception as exc:  # noqa: BLE001
+                print(f"Failed to send progress update: {exc}")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
 def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: dict, chat_id, text: str, video_id: str, url: str):
     user = None
+    stop_event = threading.Event()
+    start_progress_notifier(
+        bot,
+        chat_id,
+        stop_event,
+        [
+            (30, "아직 자막을 찾는 중입니다. 영상에 따라 조금 더 걸릴 수 있어요."),
+            (90, "아직 처리 중입니다. 자막이 없으면 더 느려질 수 있어요."),
+        ],
+    )
     try:
         send(bot, chat_id, "자막을 찾는 중입니다. 잠시만 기다려주세요.")
         user = upsert_user(db, telegram_message)
@@ -288,6 +315,8 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
                 ]
             ),
         )
+    finally:
+        stop_event.set()
 
 
 def handle_expression_selection_by_card_id(*, config, db, bot: TelegramClient, user: dict, chat_id, card_id: str):
@@ -373,8 +402,6 @@ def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict,
         return
 
     url = text if text.startswith("http") else f"https://{text}"
-
-    import threading
 
     thread = threading.Thread(
         target=process_short_url_job,
@@ -488,27 +515,31 @@ def handle_telegram_update(*, config, db, bot: TelegramClient, update: dict):
             print(f"Failed to upsert user on /start: {exc}")
         return
 
-    user = upsert_user(db, message)
-
     if is_command(text, "test"):
+        user = upsert_user(db, message)
         start_quiz_session(config=config, db=db, bot=bot, telegram_message=message)
         return
 
     if is_command(text, "review"):
+        user = upsert_user(db, message)
         send_long_message(bot, chat_id, format_review_message(list_weak_cards(db, user["id"], 5)))
         return
 
     if is_command(text, "stats"):
+        user = upsert_user(db, message)
         send(bot, chat_id, format_stats_message(get_user_stats(db, user["id"])))
         return
 
     if is_command(text, "history"):
+        user = upsert_user(db, message)
         send(bot, chat_id, format_history_message(list_recent_shorts(db, user["id"], 5)))
         return
 
     if is_likely_url(text):
         handle_short_url(config=config, db=db, bot=bot, telegram_message=message, text=text)
         return
+
+    user = upsert_user(db, message)
 
     selection = parse_expression_selection(text)
     if selection is not None:
