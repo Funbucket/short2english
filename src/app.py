@@ -6,7 +6,7 @@ import threading
 import time
 
 from src.lib.telegram import TelegramClient, build_inline_keyboard, send_long_message
-from src.lib.transcript import fetch_transcript
+from src.lib.transcript import TranscriptUnavailableError, fetch_transcript
 from src.lib.youtube import extract_video_id
 from src.services.llm import generate_expression_deep_dive, generate_learning_cards
 from src.services.messages import (
@@ -96,6 +96,37 @@ def format_processing_error(exc: Exception) -> str:
                 "해결:",
                 "- Supabase에서 `supabase/schema.sql` 를 실행하세요.",
                 "- 실행 후 잠시 기다린 뒤 다시 시도하세요.",
+            ]
+        )
+
+    if isinstance(exc, TranscriptUnavailableError) or "No transcript track found for this video" in message:
+        return "\n".join(
+            [
+                "이 영상은 자동으로 읽을 수 있는 자막/전사 트랙을 찾지 못했습니다.",
+                "",
+                "원인:",
+                "- YouTube가 공개 자막을 제공하지 않음",
+                "- 자동 생성 자막이 꺼져 있음",
+                "- 자막 접근이 지역/권한 제한에 걸림",
+                "",
+                "해결:",
+                "- 자막이 있는 다른 Shorts를 보내주세요.",
+                "- 같은 영상은 나중에 다시 시도해보세요.",
+            ]
+        )
+
+    if "YouTube가 이 영상의 자막/오디오 접근을 차단했습니다" in message:
+        return "\n".join(
+            [
+                "이 영상은 YouTube가 자막/오디오 접근을 차단해서 자동 처리할 수 없습니다.",
+                "",
+                "원인:",
+                "- YouTube가 봇 접근을 막음",
+                "- 해당 Shorts가 외부 전사를 허용하지 않음",
+                "",
+                "해결:",
+                "- 다른 Shorts를 보내주세요.",
+                "- 나중에 다시 시도해보세요.",
             ]
         )
 

@@ -18,6 +18,37 @@ USER_AGENT = (
 )
 
 
+class TranscriptUnavailableError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        video_id: str,
+        youtube_url: str | None,
+        title: str | None,
+        tried_sources: list[str],
+    ):
+        self.video_id = video_id
+        self.youtube_url = youtube_url
+        self.title = title
+        self.tried_sources = tried_sources
+        details = ", ".join(tried_sources) if tried_sources else "unknown"
+        super().__init__(
+            "No transcript track found for this video"
+            f" (tried: {details})"
+        )
+
+
+class _SilentYtdlpLogger:
+    def debug(self, *args, **kwargs):  # noqa: D401, ANN001, ANN002
+        return None
+
+    def warning(self, *args, **kwargs):  # noqa: D401, ANN001, ANN002
+        return None
+
+    def error(self, *args, **kwargs):  # noqa: D401, ANN001, ANN002
+        return None
+
+
 def _lazy_import_youtube_transcript_api():
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
@@ -202,6 +233,9 @@ def _extract_transcript_entries(payload) -> list[dict]:
         return entries
 
     if isinstance(payload, str):
+        if payload.lstrip().startswith("WEBVTT") or "-->" in payload:
+            return _extract_vtt_entries(payload)
+
         matches = re.findall(r"<text[^>]*>([\s\S]*?)</text>", payload)
         entries: list[dict] = []
         for match in matches:
@@ -211,6 +245,72 @@ def _extract_transcript_entries(payload) -> list[dict]:
         return entries
 
     return []
+
+
+def _extract_vtt_entries(payload: str) -> list[dict]:
+    entries: list[dict] = []
+    cue_lines: list[str] = []
+
+    def flush_cue() -> None:
+        nonlocal cue_lines
+        text = normalize_whitespace(" ".join(cue_lines))
+        cue_lines = []
+        if text:
+            entries.append({"start": 0, "duration": 0, "text": text})
+
+    for raw_line in payload.splitlines():
+        line = raw_line.strip().replace("\ufeff", "")
+        if not line:
+            flush_cue()
+            continue
+        if line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+            continue
+        if "-->" in line or re.fullmatch(r"\d+", line):
+            continue
+        cue_lines.append(_decode_xml_text(line))
+
+    flush_cue()
+    return entries
+
+
+def _extract_ytdlp_caption_tracks(info: dict) -> list[dict]:
+    tracks: list[dict] = []
+    for collection_name, kind in (("subtitles", "sub"), ("automatic_captions", "asr")):
+        collection = info.get(collection_name)
+        if not isinstance(collection, dict):
+            continue
+        for language_code, variants in collection.items():
+            if not isinstance(variants, list):
+                continue
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                base_url = variant.get("url")
+                if not base_url:
+                    continue
+                tracks.append(
+                    {
+                        "baseUrl": base_url,
+                        "languageCode": language_code,
+                        "kind": kind,
+                        "name": variant.get("name") or language_code,
+                        "source": "yt_dlp",
+                        "ext": variant.get("ext"),
+                    }
+                )
+    return tracks
+
+
+def _is_ytdlp_youtube_blocked(message: str) -> bool:
+    normalized = message.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "sign in to confirm you're not a bot",
+            "you need to sign in",
+            "cookies",
+        )
+    )
 
 
 def fetch_youtube_metadata(video_id: str) -> dict:
@@ -227,6 +327,36 @@ def fetch_youtube_metadata(video_id: str) -> dict:
         "title": _extract_title(html),
         "caption_tracks": _extract_caption_tracks(html),
     }
+
+
+def fetch_youtube_metadata_with_ytdlp(youtube_url: str) -> dict:
+    yt_dlp = _lazy_import_ytdlp()
+    if yt_dlp is None:
+        return {"caption_tracks": [], "blocked_by_youtube": False}
+
+    try:
+        with yt_dlp.YoutubeDL(
+            {
+                "quiet": True,
+                "no_warnings": True,
+                "logger": _SilentYtdlpLogger(),
+                "noplaylist": True,
+                "skip_download": True,
+                "extract_flat": False,
+            }
+        ) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+        return {
+            "title": info.get("title"),
+            "caption_tracks": _extract_ytdlp_caption_tracks(info),
+            "blocked_by_youtube": False,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "caption_tracks": [],
+            "blocked_by_youtube": _is_ytdlp_youtube_blocked(str(exc)),
+            "blocked_reason": str(exc),
+        }
 
 
 def _fetch_with_youtube_transcript_api(video_id: str, preferred_languages: list[str] | None):
@@ -275,6 +405,8 @@ def _download_audio_with_ytdlp(youtube_url: str) -> tuple[str, str | None]:
             "format": "bestaudio/best",
             "outtmpl": output_template,
             "quiet": True,
+            "no_warnings": True,
+            "logger": _SilentYtdlpLogger(),
             "noplaylist": True,
         }
 
@@ -346,7 +478,9 @@ def _fetch_with_audio_fallback(
             "transcript_text": transcript_text,
             "source": "openai_audio_transcription",
         }
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        if _is_ytdlp_youtube_blocked(str(exc)):
+            raise RuntimeError("YouTube blocked access to this video") from exc
         return None
 
 
@@ -364,27 +498,69 @@ def fetch_transcript(
 
     metadata = fetch_youtube_metadata(video_id)
     track = _choose_caption_track(metadata["caption_tracks"])
+    blocked_by_youtube = False
+
+    if not track and youtube_url:
+        ytdlp_metadata = fetch_youtube_metadata_with_ytdlp(youtube_url)
+        if ytdlp_metadata.get("title") and not metadata.get("title"):
+            metadata["title"] = ytdlp_metadata["title"]
+        if ytdlp_metadata.get("caption_tracks"):
+            track = _choose_caption_track(ytdlp_metadata["caption_tracks"])
+        blocked_by_youtube = bool(ytdlp_metadata.get("blocked_by_youtube"))
+
     if track:
-        transcript_url = _ensure_json3(track["baseUrl"])
-        payload = _fetch_json_or_xml(transcript_url)
-        entries = _extract_transcript_entries(payload)
-        transcript_text = clean_transcript_text(" ".join(entry["text"] for entry in entries))
+        transcript_urls = [track["baseUrl"]]
+        json3_url = _ensure_json3(track["baseUrl"])
+        if json3_url not in transcript_urls:
+            transcript_urls.append(json3_url)
 
-        if transcript_text:
-            return {
-                "title": metadata["title"],
-                "track": track,
-                "entries": entries,
-                "transcript_text": transcript_text,
-                "source": "youtube_caption_fallback",
-            }
+        for transcript_url in transcript_urls:
+            try:
+                payload = _fetch_json_or_xml(transcript_url)
+            except Exception:
+                continue
 
-    audio_fallback = _fetch_with_audio_fallback(
+            entries = _extract_transcript_entries(payload)
+            transcript_text = clean_transcript_text(" ".join(entry["text"] for entry in entries))
+
+            if transcript_text:
+                return {
+                    "title": metadata["title"],
+                    "track": track,
+                    "entries": entries,
+                    "transcript_text": transcript_text,
+                    "source": "youtube_caption_fallback",
+                }
+
+    try:
+        audio_fallback = _fetch_with_audio_fallback(
+            youtube_url=youtube_url,
+            openai_api_key=openai_api_key,
+            transcription_model=transcription_model,
+        )
+    except RuntimeError as exc:
+        if "YouTube blocked access to this video" in str(exc):
+            blocked_by_youtube = True
+        else:
+            raise
+    else:
+        if audio_fallback:
+            return audio_fallback
+
+    if blocked_by_youtube:
+        raise RuntimeError(
+            "YouTube가 이 영상의 자막/오디오 접근을 차단했습니다. "
+            "다른 Shorts를 시도하거나 나중에 다시 시도해주세요."
+        )
+
+    raise TranscriptUnavailableError(
+        video_id=video_id,
         youtube_url=youtube_url,
-        openai_api_key=openai_api_key,
-        transcription_model=transcription_model,
+        title=metadata.get("title"),
+        tried_sources=[
+            "youtube_transcript_api",
+            "youtube_page_caption_tracks",
+            "youtube_dlp_caption_tracks",
+            "openai_audio_transcription",
+        ],
     )
-    if audio_fallback:
-        return audio_fallback
-
-    raise RuntimeError("No transcript track found for this video")
