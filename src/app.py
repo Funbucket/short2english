@@ -26,6 +26,7 @@ from src.services.repository import (
     close_active_quiz_sessions,
     create_failed_short,
     create_quiz_session,
+    create_cards_for_short,
     create_short_with_cards,
     find_expression_by_sentence_id,
     find_short_by_user_and_video_id,
@@ -283,6 +284,8 @@ def start_progress_notifier(bot: TelegramClient, chat_id, stop_event: threading.
 
 def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: dict, chat_id, text: str, video_id: str, url: str):
     user = None
+    target_short = None
+    reuse_existing_short = False
     stop_event = threading.Event()
     start_progress_notifier(
         bot,
@@ -294,23 +297,25 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
         ],
     )
     try:
-        send(bot, chat_id, "자막을 찾는 중입니다. 잠시만 기다려주세요.")
         user = upsert_user(db, telegram_message)
         existing_short = find_short_by_user_and_video_id(db, user["id"], video_id)
         if existing_short:
             cards = get_short_cards(db, existing_short["id"])
             if not cards:
-                send(bot, chat_id, "저장된 학습 카드가 없습니다. 새 YouTube Shorts 링크를 보내주세요.")
+                send(bot, chat_id, "저장된 카드가 비어 있어서 다시 처리 중입니다. 잠시만 기다려주세요.")
+                target_short = existing_short
+                reuse_existing_short = True
+            else:
+                set_user_active_short(db, user["id"], existing_short["id"])
+                send_summary_cards(
+                    bot=bot,
+                    chat_id=chat_id,
+                    short=existing_short,
+                    cards=cards,
+                    source="saved",
+                )
                 return
-            set_user_active_short(db, user["id"], existing_short["id"])
-            send_summary_cards(
-                bot=bot,
-                chat_id=chat_id,
-                short=existing_short,
-                cards=cards,
-                source="saved",
-            )
-            return
+        send(bot, chat_id, "자막을 찾는 중입니다. 잠시만 기다려주세요.")
 
         transcript = fetch_transcript(
             video_id,
@@ -337,16 +342,36 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
             }
             for card in generated["cards"]
         ]
-        result = create_short_with_cards(
-            db,
-            user_id=user["id"],
-            video_id=video_id,
-            url=url,
-            title=transcript.get("title"),
-            transcript_source=transcript.get("source"),
-            transcript_text=transcript["transcript_text"],
-            cards=cards_to_store,
-        )
+        if reuse_existing_short and target_short:
+            short_rows = db.update(
+                "shorts",
+                {
+                    "title": transcript.get("title"),
+                    "transcript_source": transcript.get("source"),
+                    "transcript_text": transcript["transcript_text"],
+                    "processing_status": "completed",
+                    "error_message": None,
+                },
+                filters=[{"column": "id", "op": "eq", "value": target_short["id"]}],
+            )
+            updated_short = short_rows[0] if isinstance(short_rows, list) and short_rows else target_short
+            result = create_cards_for_short(
+                db,
+                short=updated_short,
+                user_id=user["id"],
+                cards=cards_to_store,
+            )
+        else:
+            result = create_short_with_cards(
+                db,
+                user_id=user["id"],
+                video_id=video_id,
+                url=url,
+                title=transcript.get("title"),
+                transcript_source=transcript.get("source"),
+                transcript_text=transcript["transcript_text"],
+                cards=cards_to_store,
+            )
         set_user_active_short(db, user["id"], result["short"]["id"])
 
         send_summary_cards(

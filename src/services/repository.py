@@ -156,6 +156,34 @@ def create_short_with_cards(
     return {"short": short, "cards": created_cards}
 
 
+def create_cards_for_short(db, *, short: dict, user_id, cards: list[dict]):
+    card_rows = [
+        {
+            "short_id": short["id"],
+            "user_id": user_id,
+            "sequence": index + 1,
+            "english_text": card["english_text"],
+            "korean_meaning": card["korean_meaning"],
+            "key_expression": card["key_expression"],
+            "key_expression_meaning": card["key_expression_meaning"],
+        }
+        for index, card in enumerate(cards)
+    ]
+    created_cards = _rows(db.insert("cards", card_rows)) if card_rows else []
+    updated_short_rows = _rows(
+        db.update(
+            "shorts",
+            {
+                "processing_status": "completed",
+                "error_message": None,
+            },
+            filters=[{"column": "id", "op": "eq", "value": short["id"]}],
+        )
+    )
+    updated_short = updated_short_rows[0] if updated_short_rows else short
+    return {"short": updated_short, "cards": created_cards}
+
+
 def create_failed_short(
     db,
     *,
