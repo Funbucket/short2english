@@ -434,11 +434,16 @@ def handle_telegram_update(*, config, db, bot: TelegramClient, update: dict):
         return
 
     chat_id = message["chat"]["id"]
-    user = upsert_user(db, message)
 
     if is_command(text, "start"):
         send(bot, chat_id, start_message())
+        try:
+            upsert_user(db, message)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Failed to upsert user on /start: {exc}")
         return
+
+    user = upsert_user(db, message)
 
     if is_command(text, "test"):
         start_quiz_session(config=config, db=db, bot=bot, telegram_message=message)
