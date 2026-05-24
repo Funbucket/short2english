@@ -193,6 +193,103 @@ def send_expression_deep_dive(*, config, db, bot: TelegramClient, chat_id, card:
     return expression
 
 
+def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: dict, chat_id, text: str, video_id: str, url: str):
+    user = None
+    try:
+        send(bot, chat_id, "자막을 찾는 중입니다. 잠시만 기다려주세요.")
+        user = upsert_user(db, telegram_message)
+        existing_short = find_short_by_user_and_video_id(db, user["id"], video_id)
+        if existing_short:
+            cards = get_short_cards(db, existing_short["id"])
+            if not cards:
+                send(bot, chat_id, "저장된 학습 카드가 없습니다. 새 YouTube Shorts 링크를 보내주세요.")
+                return
+            set_user_active_short(db, user["id"], existing_short["id"])
+            send_summary_cards(
+                bot=bot,
+                chat_id=chat_id,
+                short=existing_short,
+                cards=cards,
+                source="saved",
+            )
+            return
+
+        transcript = fetch_transcript(
+            video_id,
+            youtube_url=url,
+            preferred_languages=config.transcript_languages,
+            openai_api_key=config.openai_api_key,
+            transcription_model=config.transcription_model,
+        )
+        send(bot, chat_id, "학습 카드를 만드는 중입니다.")
+        generated = generate_learning_cards(
+            config=config,
+            video_id=video_id,
+            title=transcript.get("title"),
+            transcript_text=transcript["transcript_text"],
+        )
+        if not generated["cards"]:
+            raise RuntimeError("학습 카드를 생성하지 못했습니다.")
+        cards_to_store = [
+            {
+                "english_text": card["sentence"],
+                "korean_meaning": card["meaning_ko"],
+                "key_expression": card["key_expression"],
+                "key_expression_meaning": card["key_expression_meaning_ko"],
+            }
+            for card in generated["cards"]
+        ]
+        result = create_short_with_cards(
+            db,
+            user_id=user["id"],
+            video_id=video_id,
+            url=url,
+            title=transcript.get("title"),
+            transcript_source=transcript.get("source"),
+            transcript_text=transcript["transcript_text"],
+            cards=cards_to_store,
+        )
+        set_user_active_short(db, user["id"], result["short"]["id"])
+
+        send_summary_cards(
+            bot=bot,
+            chat_id=chat_id,
+            short=result["short"],
+            cards=result["cards"],
+            source=generated["source"],
+        )
+    except Exception as exc:
+        if user:
+            try:
+                create_failed_short(
+                    db,
+                    user_id=user["id"],
+                    video_id=video_id,
+                    url=url,
+                    title=None,
+                    transcript_source=None,
+                    error_message=str(exc),
+                )
+            except Exception as inner_exc:  # noqa: BLE001
+                print(f"Failed to persist short error: {inner_exc}")
+        send_long_message(
+            bot,
+            chat_id,
+            "\n".join(
+                [
+                    "Short 처리를 완료하지 못했습니다.",
+                    "",
+                    str(exc),
+                    "",
+                    "원인:",
+                    "- YouTube captions가 없을 수 있음",
+                    "- transcript extraction이 실패했을 수 있음",
+                    "- LLM 설정이 필요할 수 있음",
+                ]
+            ),
+        )
+
+
 def handle_expression_selection_by_card_id(*, config, db, bot: TelegramClient, user: dict, chat_id, card_id: str):
     card = get_card_by_id(db, card_id)
     if not card or card.get("user_id") != user["id"]:
@@ -269,7 +366,6 @@ def handle_callback_query(*, config, db, bot: TelegramClient, update: dict):
 
 def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict, text: str):
     chat_id = (telegram_message.get("chat") or {}).get("id")
-    user = None
     video_id = extract_video_id(text)
 
     if not video_id:
@@ -279,97 +375,23 @@ def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict,
     url = text if text.startswith("http") else f"https://{text}"
     send(bot, chat_id, "링크를 확인 중입니다. 잠시만 기다려주세요.")
 
-    try:
-        user = upsert_user(db, telegram_message)
-        existing_short = find_short_by_user_and_video_id(db, user["id"], video_id)
-        if existing_short:
-            cards = get_short_cards(db, existing_short["id"])
-            if not cards:
-                send(bot, chat_id, "저장된 학습 카드가 없습니다. 새 YouTube Shorts 링크를 보내주세요.")
-                return
-            set_user_active_short(db, user["id"], existing_short["id"])
-            send_summary_cards(
-                bot=bot,
-                chat_id=chat_id,
-                short=existing_short,
-                cards=cards,
-                source="saved",
-            )
-            return
+    import threading
 
-        transcript = fetch_transcript(
-            video_id,
-            youtube_url=url,
-            preferred_languages=config.transcript_languages,
-            openai_api_key=config.openai_api_key,
-            transcription_model=config.transcription_model,
-        )
-        generated = generate_learning_cards(
-            config=config,
-            video_id=video_id,
-            title=transcript.get("title"),
-            transcript_text=transcript["transcript_text"],
-        )
-        if not generated["cards"]:
-            raise RuntimeError("학습 카드를 생성하지 못했습니다.")
-        cards_to_store = [
-            {
-                "english_text": card["sentence"],
-                "korean_meaning": card["meaning_ko"],
-                "key_expression": card["key_expression"],
-                "key_expression_meaning": card["key_expression_meaning_ko"],
-            }
-            for card in generated["cards"]
-        ]
-        result = create_short_with_cards(
-            db,
-            user_id=user["id"],
-            video_id=video_id,
-            url=url,
-            title=transcript.get("title"),
-            transcript_source=transcript.get("source"),
-            transcript_text=transcript["transcript_text"],
-            cards=cards_to_store,
-        )
-        set_user_active_short(db, user["id"], result["short"]["id"])
-
-        send_summary_cards(
-            bot=bot,
-            chat_id=chat_id,
-            short=result["short"],
-            cards=result["cards"],
-            source=generated["source"],
-        )
-    except Exception as exc:
-        if user:
-            try:
-                create_failed_short(
-                    db,
-                    user_id=user["id"],
-                    video_id=video_id,
-                    url=url,
-                    title=None,
-                    transcript_source=None,
-                    error_message=str(exc),
-                )
-            except Exception as inner_exc:  # noqa: BLE001
-                print(f"Failed to persist short error: {inner_exc}")
-        send_long_message(
-            bot,
-            chat_id,
-            "\n".join(
-                [
-                    "Short 처리를 완료하지 못했습니다.",
-                    "",
-                    str(exc),
-                    "",
-                    "원인:",
-                    "- YouTube captions가 없을 수 있음",
-                    "- transcript extraction이 실패했을 수 있음",
-                    "- LLM 설정이 필요할 수 있음",
-                ]
-            ),
-        )
+    thread = threading.Thread(
+        target=process_short_url_job,
+        kwargs={
+            "config": config,
+            "db": db,
+            "bot": bot,
+            "telegram_message": telegram_message,
+            "chat_id": chat_id,
+            "text": text,
+            "video_id": video_id,
+            "url": url,
+        },
+        daemon=True,
+    )
+    thread.start()
 
 
 def start_quiz_session(*, config, db, bot: TelegramClient, telegram_message: dict):
