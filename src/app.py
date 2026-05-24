@@ -190,6 +190,16 @@ def get_summary_cards(short: dict, cards: list[dict]) -> list[dict]:
     return cards[:3]
 
 
+def should_retry_existing_short(existing_short: dict) -> bool:
+    if not existing_short:
+        return False
+    if existing_short.get("processing_status") == "failed":
+        return False
+    if str(existing_short.get("error_message") or "").strip():
+        return False
+    return True
+
+
 def send_summary_cards(*, bot: TelegramClient, chat_id, short: dict, cards: list[dict], source: str | None = None):
     summary_cards = get_summary_cards(short, cards)
     options = {"reply_markup": build_expression_keyboard(summary_cards)} if summary_cards else None
@@ -302,6 +312,15 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
         if existing_short:
             cards = get_short_cards(db, existing_short["id"])
             if not cards:
+                if not should_retry_existing_short(existing_short):
+                    send_long_message(
+                        bot,
+                        chat_id,
+                        format_processing_error(
+                            RuntimeError(str(existing_short.get("error_message") or "이전 처리에 실패했습니다."))
+                        ),
+                    )
+                    return
                 send(bot, chat_id, "저장된 카드가 비어 있어서 다시 처리 중입니다. 잠시만 기다려주세요.")
                 target_short = existing_short
                 reuse_existing_short = True

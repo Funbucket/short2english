@@ -5,6 +5,7 @@ from src.app import (
     format_processing_error,
     mark_update_seen,
     parse_expression_selection,
+    should_retry_existing_short,
 )
 from src.lib.telegram import chunk_text_for_telegram
 from src.lib.text import clean_transcript_text
@@ -94,6 +95,23 @@ class HelperTest(unittest.TestCase):
         )
         self.assertIn("자동으로 읽을 수 있는 자막/전사 트랙을 찾지 못했습니다.", message)
         self.assertIn("다른 Shorts를 보내주세요", message)
+
+    def test_should_retry_existing_short_skips_failed_records(self):
+        self.assertFalse(
+            should_retry_existing_short(
+                {"processing_status": "failed", "error_message": "YouTube blocked access to this video"}
+            )
+        )
+        self.assertFalse(
+            should_retry_existing_short(
+                {"processing_status": "completed", "error_message": "YouTube blocked access to this video"}
+            )
+        )
+        self.assertTrue(
+            should_retry_existing_short(
+                {"processing_status": "completed", "error_message": ""}
+            )
+        )
 
 
 if __name__ == "__main__":
