@@ -366,30 +366,83 @@ def _fetch_with_youtube_transcript_api(video_id: str, preferred_languages: list[
 
     try:
         ytt_api = transcript_api_cls()
-        fetched = ytt_api.fetch(video_id, languages=preferred_languages or ["en"])
-        entries = [
-            {
-                "start": float(item.start or 0),
-                "duration": float(item.duration or 0),
-                "text": normalize_whitespace(item.text),
-            }
-            for item in fetched
-            if normalize_whitespace(item.text)
-        ]
-        transcript_text = clean_transcript_text(" ".join(item["text"] for item in entries))
-        if not transcript_text:
-            raise RuntimeError("Transcript was empty")
-        title = None
+        transcript_candidates = []
+
+        fetch_calls = [lambda: ytt_api.fetch(video_id)]
+        if preferred_languages:
+            fetch_calls.append(lambda: ytt_api.fetch(video_id, languages=preferred_languages))
+
+        for fetch_call in fetch_calls:
+            try:
+                transcript_candidates.append(fetch_call())
+            except Exception:
+                continue
+
+        transcript_list = None
         try:
-            title = fetch_youtube_metadata(video_id)["title"]
+            transcript_list = ytt_api.list(video_id)
         except Exception:
+            transcript_list = None
+
+        if transcript_list is not None:
+            languages = preferred_languages or ["en"]
+            for selector in (
+                getattr(transcript_list, "find_manually_created_transcript", None),
+                getattr(transcript_list, "find_generated_transcript", None),
+                getattr(transcript_list, "find_transcript", None),
+            ):
+                if selector is None:
+                    continue
+                try:
+                    transcript_candidates.append(selector(languages))
+                except Exception:
+                    continue
+
+        for transcript in transcript_candidates:
+            if transcript is None:
+                continue
+
+            try:
+                raw_entries = transcript.to_raw_data() if hasattr(transcript, "to_raw_data") else transcript
+            except Exception:
+                raw_entries = transcript
+
+            if isinstance(raw_entries, list):
+                entries = [
+                    {
+                        "start": float(item.get("start") or 0),
+                        "duration": float(item.get("duration") or 0),
+                        "text": normalize_whitespace(item.get("text") or ""),
+                    }
+                    for item in raw_entries
+                    if normalize_whitespace(item.get("text") or "")
+                ]
+            else:
+                entries = [
+                    {
+                        "start": float(item.start or 0),
+                        "duration": float(item.duration or 0),
+                        "text": normalize_whitespace(item.text),
+                    }
+                    for item in transcript
+                    if normalize_whitespace(item.text)
+                ]
+
+            transcript_text = clean_transcript_text(" ".join(item["text"] for item in entries))
+            if not transcript_text:
+                continue
+
             title = None
-        return {
-            "title": title,
-            "entries": entries,
-            "transcript_text": transcript_text,
-            "source": "youtube_transcript_api",
-        }
+            try:
+                title = fetch_youtube_metadata(video_id)["title"]
+            except Exception:
+                title = None
+            return {
+                "title": title,
+                "entries": entries,
+                "transcript_text": transcript_text,
+                "source": "youtube_transcript_api",
+            }
     except Exception:  # noqa: BLE001
         return None
 
