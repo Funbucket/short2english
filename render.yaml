@@ -34,3 +34,11 @@ services:
         sync: false
       - key: LLM_MODEL
         value: gpt-4o-mini
+      - key: YOUTUBE_PROXY_URL
+        sync: false
+      - key: YOUTUBE_HTTP_PROXY_URL
+        sync: false
+      - key: YOUTUBE_HTTPS_PROXY_URL
+        sync: false
+      - key: YOUTUBE_COOKIES_FILE
+        sync: false

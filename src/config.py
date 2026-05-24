@@ -103,6 +103,10 @@ class Config:
     llm_chat_completions_url: str
     llm_api_key: str
     llm_model: str
+    youtube_proxy_url: str
+    youtube_http_proxy_url: str
+    youtube_https_proxy_url: str
+    youtube_cookies_file: str
     quiz_size: int
 
 
@@ -127,5 +131,9 @@ def load_config() -> Config:
         llm_chat_completions_url=env("LLM_CHAT_COMPLETIONS_URL", "") or "",
         llm_api_key=env("LLM_API_KEY", "") or "",
         llm_model=env("LLM_MODEL", "") or "",
+        youtube_proxy_url=env("YOUTUBE_PROXY_URL", "") or "",
+        youtube_http_proxy_url=env("YOUTUBE_HTTP_PROXY_URL", "") or "",
+        youtube_https_proxy_url=env("YOUTUBE_HTTPS_PROXY_URL", "") or "",
+        youtube_cookies_file=env("YOUTUBE_COOKIES_FILE", "") or "",
         quiz_size=int_env("QUIZ_SIZE", 7),
     )

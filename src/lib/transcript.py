@@ -76,6 +76,29 @@ def _lazy_import_openai_client():
         return None
 
 
+def _lazy_import_generic_proxy_config():
+    try:
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        return GenericProxyConfig
+    except Exception:
+        return None
+
+
+def _build_proxy_config(http_url: str | None, https_url: str | None):
+    if not http_url and not https_url:
+        return None
+
+    proxy_cls = _lazy_import_generic_proxy_config()
+    if proxy_cls is None:
+        return None
+
+    return proxy_cls(
+        http_url=http_url or https_url,
+        https_url=https_url or http_url,
+    )
+
+
 def _find_balanced_fragment(
     text: str,
     start_index: int,
@@ -313,11 +336,12 @@ def _is_ytdlp_youtube_blocked(message: str) -> bool:
     )
 
 
-def fetch_youtube_metadata(video_id: str) -> dict:
+def fetch_youtube_metadata(video_id: str, *, proxy_url: str | None = None) -> dict:
     response = request(
         "GET",
         f"https://www.youtube.com/watch?v={video_id}&hl=en&gl=US",
         headers={"user-agent": USER_AGENT},
+        proxy_url=proxy_url,
     )
     if response.status >= 400:
         raise RuntimeError(f"YouTube page request failed ({response.status})")
@@ -329,7 +353,12 @@ def fetch_youtube_metadata(video_id: str) -> dict:
     }
 
 
-def fetch_youtube_metadata_with_ytdlp(youtube_url: str) -> dict:
+def fetch_youtube_metadata_with_ytdlp(
+    youtube_url: str,
+    *,
+    proxy_url: str | None = None,
+    cookies_file: str | None = None,
+) -> dict:
     yt_dlp = _lazy_import_ytdlp()
     if yt_dlp is None:
         return {"caption_tracks": [], "blocked_by_youtube": False}
@@ -343,6 +372,8 @@ def fetch_youtube_metadata_with_ytdlp(youtube_url: str) -> dict:
                 "noplaylist": True,
                 "skip_download": True,
                 "extract_flat": False,
+                "proxy": proxy_url,
+                "cookiefile": cookies_file or None,
             }
         ) as ydl:
             info = ydl.extract_info(youtube_url, download=False)
@@ -359,13 +390,22 @@ def fetch_youtube_metadata_with_ytdlp(youtube_url: str) -> dict:
         }
 
 
-def _fetch_with_youtube_transcript_api(video_id: str, preferred_languages: list[str] | None):
+def _fetch_with_youtube_transcript_api(
+    video_id: str,
+    preferred_languages: list[str] | None,
+    *,
+    proxy_config=None,
+    proxy_url: str | None = None,
+):
     transcript_api_cls = _lazy_import_youtube_transcript_api()
     if transcript_api_cls is None:
         return None
 
     try:
-        ytt_api = transcript_api_cls()
+        if proxy_config is not None:
+            ytt_api = transcript_api_cls(proxy_config=proxy_config)
+        else:
+            ytt_api = transcript_api_cls()
         transcript_candidates = []
 
         fetch_calls = [lambda: ytt_api.fetch(video_id)]
@@ -434,7 +474,7 @@ def _fetch_with_youtube_transcript_api(video_id: str, preferred_languages: list[
 
             title = None
             try:
-                title = fetch_youtube_metadata(video_id)["title"]
+                title = fetch_youtube_metadata(video_id, proxy_url=proxy_url)["title"]
             except Exception:
                 title = None
             return {
@@ -447,7 +487,12 @@ def _fetch_with_youtube_transcript_api(video_id: str, preferred_languages: list[
         return None
 
 
-def _download_audio_with_ytdlp(youtube_url: str) -> tuple[str, str | None]:
+def _download_audio_with_ytdlp(
+    youtube_url: str,
+    *,
+    proxy_url: str | None = None,
+    cookies_file: str | None = None,
+) -> tuple[str, str | None]:
     yt_dlp = _lazy_import_ytdlp()
     if yt_dlp is None:
         raise RuntimeError("yt-dlp is not installed")
@@ -461,6 +506,8 @@ def _download_audio_with_ytdlp(youtube_url: str) -> tuple[str, str | None]:
             "no_warnings": True,
             "logger": _SilentYtdlpLogger(),
             "noplaylist": True,
+            "proxy": proxy_url,
+            "cookiefile": cookies_file or None,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -508,12 +555,18 @@ def _fetch_with_audio_fallback(
     youtube_url: str | None,
     openai_api_key: str | None,
     transcription_model: str,
+    proxy_url: str | None = None,
+    cookies_file: str | None = None,
 ):
     if not youtube_url or not openai_api_key:
         return None
 
     try:
-        audio_path, title = _download_audio_with_ytdlp(youtube_url)
+        audio_path, title = _download_audio_with_ytdlp(
+            youtube_url,
+            proxy_url=proxy_url,
+            cookies_file=cookies_file,
+        )
         try:
             transcript_text = _transcribe_audio_with_openai(
                 audio_path=audio_path,
@@ -544,17 +597,33 @@ def fetch_transcript(
     preferred_languages: list[str] | None = None,
     openai_api_key: str | None = None,
     transcription_model: str = "whisper-1",
+    youtube_proxy_url: str | None = None,
+    youtube_http_proxy_url: str | None = None,
+    youtube_https_proxy_url: str | None = None,
+    youtube_cookies_file: str | None = None,
 ) -> dict:
-    youtube_transcript = _fetch_with_youtube_transcript_api(video_id, preferred_languages)
+    proxy_url = youtube_proxy_url or youtube_https_proxy_url or youtube_http_proxy_url
+    proxy_config = _build_proxy_config(youtube_http_proxy_url or proxy_url, youtube_https_proxy_url or proxy_url)
+
+    youtube_transcript = _fetch_with_youtube_transcript_api(
+        video_id,
+        preferred_languages,
+        proxy_config=proxy_config,
+        proxy_url=proxy_url,
+    )
     if youtube_transcript:
         return youtube_transcript
 
-    metadata = fetch_youtube_metadata(video_id)
+    metadata = fetch_youtube_metadata(video_id, proxy_url=proxy_url)
     track = _choose_caption_track(metadata["caption_tracks"])
     blocked_by_youtube = False
 
     if not track and youtube_url:
-        ytdlp_metadata = fetch_youtube_metadata_with_ytdlp(youtube_url)
+        ytdlp_metadata = fetch_youtube_metadata_with_ytdlp(
+            youtube_url,
+            proxy_url=proxy_url,
+            cookies_file=youtube_cookies_file,
+        )
         if ytdlp_metadata.get("title") and not metadata.get("title"):
             metadata["title"] = ytdlp_metadata["title"]
         if ytdlp_metadata.get("caption_tracks"):
@@ -590,6 +659,8 @@ def fetch_transcript(
             youtube_url=youtube_url,
             openai_api_key=openai_api_key,
             transcription_model=transcription_model,
+            proxy_url=proxy_url,
+            cookies_file=youtube_cookies_file,
         )
     except RuntimeError as exc:
         if "YouTube blocked access to this video" in str(exc):

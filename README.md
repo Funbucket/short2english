@@ -36,6 +36,13 @@ TRANSCRIPT_LANGUAGES=en
 LLM_CHAT_COMPLETIONS_URL=https://api.openai.com/v1/chat/completions
 LLM_API_KEY=your-llm-api-key
 LLM_MODEL=gpt-4o-mini
+
+# Optional but recommended if YouTube blocks Render IPs.
+# Use a rotating residential proxy if possible.
+YOUTUBE_PROXY_URL=
+YOUTUBE_HTTP_PROXY_URL=
+YOUTUBE_HTTPS_PROXY_URL=
+YOUTUBE_COOKIES_FILE=
 ```
 
 ## Supabase schema
@@ -64,13 +71,18 @@ python -m unittest discover -s test
 - The service uses the native Python runtime, not Docker.
 - Set the required secrets in the Render dashboard or Blueprint:
   - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_WEBHOOK_SECRET`
-- `TELEGRAM_BOT_MODE=webhook` on Render
-- `SUPABASE_URL`
+  - `TELEGRAM_WEBHOOK_SECRET`
+  - `TELEGRAM_BOT_MODE=webhook` on Render
+  - `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `OPENAI_API_KEY`
   - Optional: `OPENAI_MODEL`, `TRANSCRIPTION_MODEL`, `TRANSCRIPT_LANGUAGES`
   - Optional fallback: `LLM_CHAT_COMPLETIONS_URL`, `LLM_API_KEY`, `LLM_MODEL`
+  - Optional YouTube proxy/cookies:
+    - `YOUTUBE_PROXY_URL`
+    - `YOUTUBE_HTTP_PROXY_URL`
+    - `YOUTUBE_HTTPS_PROXY_URL`
+    - `YOUTUBE_COOKIES_FILE`
 - Render will set `PORT=10000` from the Blueprint.
 - Deploy by linking the repo to a Render Web Service or by applying the Blueprint.
 
@@ -85,6 +97,8 @@ python -m unittest discover -s test
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `OPENAI_API_KEY`
+   - Optional if YouTube blocks Render: `YOUTUBE_PROXY_URL` or `YOUTUBE_HTTP_PROXY_URL` / `YOUTUBE_HTTPS_PROXY_URL`
+   - Optional: `YOUTUBE_COOKIES_FILE`
 5. Deploy the service.
 6. After the first deploy, open the Render logs and confirm that `Telegram webhook set to .../telegram/webhook` appears.
 7. Open the Telegram bot and send `/start`.
@@ -103,6 +117,7 @@ python -m unittest discover -s test
 ## Notes
 
 - Transcript extraction tries `youtube_transcript_api` first, then falls back to `yt-dlp` + OpenAI audio transcription if `OPENAI_API_KEY` is set.
+- If YouTube blocks Render's IP, set a residential proxy via `YOUTUBE_PROXY_URL` or the split HTTP/HTTPS proxy variables. Without a proxy, some videos will still fail on cloud IPs.
 - Without an LLM configured, the bot still stores shorts and creates placeholder cards, but the Korean meaning fields will not be high quality.
 - The first message is intentionally short. Users can tap a number button or send a number to open the deep-dive card for that expression.
 - On Render, the bot runs in webhook mode. The service sets Telegram's webhook on startup using `RENDER_EXTERNAL_URL`.

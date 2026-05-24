@@ -116,7 +116,12 @@ def format_processing_error(exc: Exception) -> str:
             ]
         )
 
-    if "YouTube가 이 영상의 자막/오디오 접근을 차단했습니다" in message:
+    if (
+        "YouTube가 이 영상의 자막/오디오 접근을 차단했습니다" in message
+        or "YouTube blocked access to this video" in message
+        or "RequestBlocked" in message
+        or "IpBlocked" in message
+    ):
         return "\n".join(
             [
                 "이 영상은 YouTube가 자막/오디오 접근을 차단해서 자동 처리할 수 없습니다.",
@@ -127,7 +132,8 @@ def format_processing_error(exc: Exception) -> str:
                 "",
                 "해결:",
                 "- 다른 Shorts를 보내주세요.",
-                "- 나중에 다시 시도해보세요.",
+                "- 안정적으로 쓰려면 residential proxy를 연결하세요.",
+                "- `YOUTUBE_PROXY_URL` 또는 `YOUTUBE_HTTP_PROXY_URL` / `YOUTUBE_HTTPS_PROXY_URL` 를 설정하세요.",
             ]
         )
 
@@ -136,6 +142,8 @@ def format_processing_error(exc: Exception) -> str:
             "Short 처리를 완료하지 못했습니다.",
             "",
             message,
+            "",
+            "YouTube가 Render IP를 막는 경우에는 proxy 설정이 필요합니다.",
         ]
     )
 
@@ -342,6 +350,10 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
             preferred_languages=config.transcript_languages,
             openai_api_key=config.openai_api_key,
             transcription_model=config.transcription_model,
+            youtube_proxy_url=config.youtube_proxy_url,
+            youtube_http_proxy_url=config.youtube_http_proxy_url,
+            youtube_https_proxy_url=config.youtube_https_proxy_url,
+            youtube_cookies_file=config.youtube_cookies_file,
         )
         send(bot, chat_id, "학습 카드를 만드는 중입니다.")
         generated = generate_learning_cards(
