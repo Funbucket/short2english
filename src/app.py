@@ -43,6 +43,8 @@ from src.services.repository import (
     upsert_user,
 )
 
+_SEEN_UPDATE_IDS: set[int] = set()
+
 
 def get_message_text(update: dict) -> str:
     return (update.get("message") or {}).get("text", "").strip()
@@ -87,6 +89,18 @@ def get_chat_id_from_update(update: dict) -> int | None:
         return get_chat_id_from_message(message)
 
     return None
+
+
+def mark_update_seen(update: dict) -> bool:
+    update_id = update.get("update_id")
+    if not isinstance(update_id, int):
+        return False
+    if update_id in _SEEN_UPDATE_IDS:
+        return True
+    _SEEN_UPDATE_IDS.add(update_id)
+    if len(_SEEN_UPDATE_IDS) > 5000:
+        _SEEN_UPDATE_IDS.clear()
+    return False
 
 
 def build_expression_keyboard(cards: list[dict]) -> dict:
@@ -255,7 +269,7 @@ def handle_callback_query(*, config, db, bot: TelegramClient, update: dict):
 
 def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict, text: str):
     chat_id = (telegram_message.get("chat") or {}).get("id")
-    user = upsert_user(db, telegram_message)
+    user = None
     video_id = extract_video_id(text)
 
     if not video_id:
@@ -263,23 +277,26 @@ def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict,
         return
 
     url = text if text.startswith("http") else f"https://{text}"
-    existing_short = find_short_by_user_and_video_id(db, user["id"], video_id)
-    if existing_short:
-        cards = get_short_cards(db, existing_short["id"])
-        if not cards:
-            send(bot, chat_id, "저장된 학습 카드가 없습니다. 새 YouTube Shorts 링크를 보내주세요.")
-            return
-        set_user_active_short(db, user["id"], existing_short["id"])
-        send_summary_cards(
-            bot=bot,
-            chat_id=chat_id,
-            short=existing_short,
-            cards=cards,
-            source="saved",
-        )
-        return
+    send(bot, chat_id, "링크를 확인 중입니다. 잠시만 기다려주세요.")
 
     try:
+        user = upsert_user(db, telegram_message)
+        existing_short = find_short_by_user_and_video_id(db, user["id"], video_id)
+        if existing_short:
+            cards = get_short_cards(db, existing_short["id"])
+            if not cards:
+                send(bot, chat_id, "저장된 학습 카드가 없습니다. 새 YouTube Shorts 링크를 보내주세요.")
+                return
+            set_user_active_short(db, user["id"], existing_short["id"])
+            send_summary_cards(
+                bot=bot,
+                chat_id=chat_id,
+                short=existing_short,
+                cards=cards,
+                source="saved",
+            )
+            return
+
         transcript = fetch_transcript(
             video_id,
             youtube_url=url,
@@ -324,15 +341,19 @@ def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict,
             source=generated["source"],
         )
     except Exception as exc:
-        create_failed_short(
-            db,
-            user_id=user["id"],
-            video_id=video_id,
-            url=url,
-            title=None,
-            transcript_source=None,
-            error_message=str(exc),
-        )
+        if user:
+            try:
+                create_failed_short(
+                    db,
+                    user_id=user["id"],
+                    video_id=video_id,
+                    url=url,
+                    title=None,
+                    transcript_source=None,
+                    error_message=str(exc),
+                )
+            except Exception as inner_exc:  # noqa: BLE001
+                print(f"Failed to persist short error: {inner_exc}")
         send_long_message(
             bot,
             chat_id,
@@ -424,6 +445,9 @@ def handle_quiz_answer(*, db, bot: TelegramClient, telegram_message: dict, user:
 
 
 def handle_telegram_update(*, config, db, bot: TelegramClient, update: dict):
+    if mark_update_seen(update):
+        return
+
     if get_update_callback_query(update):
         handle_callback_query(config=config, db=db, bot=bot, update=update)
         return

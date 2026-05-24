@@ -1,6 +1,6 @@
 import unittest
 
-from src.app import build_expression_keyboard, parse_expression_selection
+from src.app import build_expression_keyboard, mark_update_seen, parse_expression_selection
 from src.lib.telegram import chunk_text_for_telegram
 from src.lib.text import clean_transcript_text
 from src.services.llm import safe_json_loads
@@ -60,6 +60,10 @@ class HelperTest(unittest.TestCase):
         )
         self.assertEqual(keyboard["inline_keyboard"][0][0]["text"], "1")
         self.assertEqual(keyboard["inline_keyboard"][0][0]["callback_data"], "exp:card-1")
+
+    def test_mark_update_seen_filters_duplicate_update_ids(self):
+        self.assertFalse(mark_update_seen({"update_id": 12345}))
+        self.assertTrue(mark_update_seen({"update_id": 12345}))
 
 
 if __name__ == "__main__":
