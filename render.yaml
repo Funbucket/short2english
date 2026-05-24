@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: short2english
+    runtime: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m src.main
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: TRANSCRIPTION_MODEL
+        value: whisper-1
+      - key: TRANSCRIPT_LANGUAGES
+        value: en
+      - key: LLM_CHAT_COMPLETIONS_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        value: gpt-4o-mini
