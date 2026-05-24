@@ -373,7 +373,6 @@ def handle_short_url(*, config, db, bot: TelegramClient, telegram_message: dict,
         return
 
     url = text if text.startswith("http") else f"https://{text}"
-    send(bot, chat_id, "링크를 확인 중입니다. 잠시만 기다려주세요.")
 
     import threading
 

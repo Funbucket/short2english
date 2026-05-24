@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,14 @@ def _read_json_body(handler: BaseHTTPRequestHandler) -> dict:
     if not raw:
         return {}
     return json.loads(raw.decode("utf-8"))
+
+
+def _looks_like_youtube_url(text: str) -> bool:
+    normalized = str(text or "").strip()
+    return bool(
+        re.match(r"^https?://\S+", normalized, flags=re.IGNORECASE)
+        or re.match(r"^(www\.)?(youtube\.com|youtu\.be)\S+", normalized, flags=re.IGNORECASE)
+    )
 
 
 def _make_handler(config, db, bot):
@@ -69,6 +78,18 @@ def _make_handler(config, db, bot):
             except json.JSONDecodeError:
                 self._send_json(400, {"ok": False, "error": "Invalid JSON"})
                 return
+
+            message = update.get("message") or {}
+            chat_id = (message.get("chat") or {}).get("id")
+            text = str(message.get("text") or "").strip()
+            if chat_id and _looks_like_youtube_url(text):
+                def send_ack():
+                    try:
+                        bot.send_message(chat_id, "링크를 확인 중입니다. 잠시만 기다려주세요.")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"Failed to send immediate URL ack: {exc}")
+
+                threading.Thread(target=send_ack, daemon=True).start()
 
             self._send_json(200, {"ok": True})
 
