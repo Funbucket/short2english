@@ -68,6 +68,46 @@ def send_with_options(bot: TelegramClient, chat_id, text: str, options: dict | N
     return bot.send_message(chat_id, text, options=options)
 
 
+def format_processing_error(exc: Exception) -> str:
+    message = str(exc)
+    if "PGRST205" in message and "public.users" in message:
+        return "\n".join(
+            [
+                "Supabase 설정이 아직 완료되지 않았습니다.",
+                "",
+                "원인:",
+                "- `public.users` 테이블이 Supabase에 아직 생성되지 않았습니다.",
+                "",
+                "해결:",
+                "- Supabase에서 `supabase/schema.sql` 를 실행하세요.",
+                "- 실행 후 Supabase의 REST schema cache가 갱신될 때까지 잠시 기다리세요.",
+                "- 테이블이 이미 있으면 Supabase Dashboard에서 SQL Editor를 다시 실행하거나, 잠시 후 다시 시도하세요.",
+            ]
+        )
+
+    if "PGRST205" in message and "public.shorts" in message:
+        return "\n".join(
+            [
+                "Supabase 설정이 아직 완료되지 않았습니다.",
+                "",
+                "원인:",
+                "- `public.shorts` 테이블이 Supabase에 아직 생성되지 않았습니다.",
+                "",
+                "해결:",
+                "- Supabase에서 `supabase/schema.sql` 를 실행하세요.",
+                "- 실행 후 잠시 기다린 뒤 다시 시도하세요.",
+            ]
+        )
+
+    return "\n".join(
+        [
+            "Short 처리를 완료하지 못했습니다.",
+            "",
+            message,
+        ]
+    )
+
+
 def get_update_message(update: dict) -> dict | None:
     return update.get("message")
 
@@ -299,22 +339,7 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
                 )
             except Exception as inner_exc:  # noqa: BLE001
                 print(f"Failed to persist short error: {inner_exc}")
-        send_long_message(
-            bot,
-            chat_id,
-            "\n".join(
-                [
-                    "Short 처리를 완료하지 못했습니다.",
-                    "",
-                    str(exc),
-                    "",
-                    "원인:",
-                    "- YouTube captions가 없을 수 있음",
-                    "- transcript extraction이 실패했을 수 있음",
-                    "- LLM 설정이 필요할 수 있음",
-                ]
-            ),
-        )
+        send_long_message(bot, chat_id, format_processing_error(exc))
     finally:
         stop_event.set()
 

@@ -1,6 +1,11 @@
 import unittest
 
-from src.app import build_expression_keyboard, mark_update_seen, parse_expression_selection
+from src.app import (
+    build_expression_keyboard,
+    format_processing_error,
+    mark_update_seen,
+    parse_expression_selection,
+)
 from src.lib.telegram import chunk_text_for_telegram
 from src.lib.text import clean_transcript_text
 from src.services.llm import safe_json_loads
@@ -64,6 +69,15 @@ class HelperTest(unittest.TestCase):
     def test_mark_update_seen_filters_duplicate_update_ids(self):
         self.assertFalse(mark_update_seen({"update_id": 12345}))
         self.assertTrue(mark_update_seen({"update_id": 12345}))
+
+    def test_format_processing_error_detects_supabase_schema_issue(self):
+        message = format_processing_error(
+            RuntimeError(
+                'Supabase GET /rest/v1/users failed (404): {"code":"PGRST205","details":null,"hint":null,"message":"Could not find the table \'public.users\' in the schema cache"}'
+            )
+        )
+        self.assertIn("Supabase 설정이 아직 완료되지 않았습니다.", message)
+        self.assertIn("supabase/schema.sql", message)
 
 
 if __name__ == "__main__":
