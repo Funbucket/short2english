@@ -107,7 +107,7 @@ class Config:
 
 
 def load_config() -> Config:
-    default_bot_mode = "polling" if env("RENDER_EXTERNAL_URL", "") else "webhook"
+    default_bot_mode = "webhook"
     return Config(
         port=int_env("PORT", 3000),
         telegram_bot_token=require_env("TELEGRAM_BOT_TOKEN"),

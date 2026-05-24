@@ -46,27 +46,20 @@ class ResolveTelegramWebhookUrlTest(unittest.TestCase):
 
 
 class TelegramBotModeTest(unittest.TestCase):
-    def test_defaults_to_polling_on_render(self):
+    def test_defaults_to_webhook(self):
         from os import environ
 
-        original = environ.get("RENDER_EXTERNAL_URL")
         original_token = environ.get("TELEGRAM_BOT_TOKEN")
         original_supabase_url = environ.get("SUPABASE_URL")
         original_supabase_key = environ.get("SUPABASE_SERVICE_ROLE_KEY")
 
         try:
-            environ["RENDER_EXTERNAL_URL"] = "https://short2english.onrender.com"
             environ["TELEGRAM_BOT_TOKEN"] = "token"
             environ["SUPABASE_URL"] = "https://example.supabase.co"
             environ["SUPABASE_SERVICE_ROLE_KEY"] = "service-role-key"
             config = load_config()
-            self.assertEqual(config.telegram_bot_mode, "polling")
+            self.assertEqual(config.telegram_bot_mode, "webhook")
         finally:
-            if original is None:
-                environ.pop("RENDER_EXTERNAL_URL", None)
-            else:
-                environ["RENDER_EXTERNAL_URL"] = original
-
             if original_token is None:
                 environ.pop("TELEGRAM_BOT_TOKEN", None)
             else:
