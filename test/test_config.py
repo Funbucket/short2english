@@ -1,6 +1,6 @@
 import unittest
 
-from src.config import resolve_telegram_webhook_url
+from src.config import load_config, resolve_telegram_webhook_url
 
 
 class ResolveTelegramWebhookUrlTest(unittest.TestCase):
@@ -43,6 +43,44 @@ class ResolveTelegramWebhookUrlTest(unittest.TestCase):
             ),
             "",
         )
+
+
+class TelegramBotModeTest(unittest.TestCase):
+    def test_defaults_to_polling_on_render(self):
+        from os import environ
+
+        original = environ.get("RENDER_EXTERNAL_URL")
+        original_token = environ.get("TELEGRAM_BOT_TOKEN")
+        original_supabase_url = environ.get("SUPABASE_URL")
+        original_supabase_key = environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+        try:
+            environ["RENDER_EXTERNAL_URL"] = "https://short2english.onrender.com"
+            environ["TELEGRAM_BOT_TOKEN"] = "token"
+            environ["SUPABASE_URL"] = "https://example.supabase.co"
+            environ["SUPABASE_SERVICE_ROLE_KEY"] = "service-role-key"
+            config = load_config()
+            self.assertEqual(config.telegram_bot_mode, "polling")
+        finally:
+            if original is None:
+                environ.pop("RENDER_EXTERNAL_URL", None)
+            else:
+                environ["RENDER_EXTERNAL_URL"] = original
+
+            if original_token is None:
+                environ.pop("TELEGRAM_BOT_TOKEN", None)
+            else:
+                environ["TELEGRAM_BOT_TOKEN"] = original_token
+
+            if original_supabase_url is None:
+                environ.pop("SUPABASE_URL", None)
+            else:
+                environ["SUPABASE_URL"] = original_supabase_url
+
+            if original_supabase_key is None:
+                environ.pop("SUPABASE_SERVICE_ROLE_KEY", None)
+            else:
+                environ["SUPABASE_SERVICE_ROLE_KEY"] = original_supabase_key
 
 
 if __name__ == "__main__":

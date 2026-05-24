@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from src.app import handle_telegram_update
@@ -82,12 +83,49 @@ def _make_handler(config, db, bot):
     return Handler
 
 
+def _start_polling_loop(config, db, bot):
+    def run():
+        offset = None
+        if config.telegram_webhook_url:
+            try:
+                bot.delete_webhook(drop_pending_updates=False)
+                print("Telegram webhook deleted for polling mode")
+            except Exception as exc:  # noqa: BLE001
+                print(f"Failed to delete Telegram webhook: {exc}")
+
+        while True:
+            try:
+                updates = bot.get_updates(offset=offset, timeout=30)
+                for update in updates:
+                    update_id = update.get("update_id")
+                    if isinstance(update_id, int):
+                        offset = update_id + 1
+                    try:
+                        handle_telegram_update(config=config, db=db, bot=bot, update=update)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"Telegram update handling failed: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"Telegram polling failed: {exc}")
+                time.sleep(5)
+                continue
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
 def main() -> None:
     config = load_config()
     db = SupabaseClient(config.supabase_url, config.supabase_service_role_key)
     bot = TelegramClient(config.telegram_bot_token)
 
-    if config.telegram_webhook_url:
+    if config.telegram_bot_mode == "polling":
+        try:
+            _start_polling_loop(config, db, bot)
+            print("Telegram polling loop started")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Failed to start Telegram polling loop: {exc}")
+    elif config.telegram_webhook_url:
         try:
             bot.set_webhook(config.telegram_webhook_url, config.telegram_webhook_secret)
             print(f"Telegram webhook set to {config.telegram_webhook_url}")

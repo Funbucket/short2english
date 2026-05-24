@@ -64,8 +64,9 @@ python -m unittest discover -s test
 - The service uses the native Python runtime, not Docker.
 - Set the required secrets in the Render dashboard or Blueprint:
   - `TELEGRAM_BOT_TOKEN`
-  - `TELEGRAM_WEBHOOK_SECRET`
-  - `SUPABASE_URL`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_BOT_MODE=polling` on Render
+- `SUPABASE_URL`
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `OPENAI_API_KEY`
   - Optional: `OPENAI_MODEL`, `TRANSCRIPTION_MODEL`, `TRANSCRIPT_LANGUAGES`
@@ -104,3 +105,4 @@ python -m unittest discover -s test
 - Transcript extraction tries `youtube_transcript_api` first, then falls back to `yt-dlp` + OpenAI audio transcription if `OPENAI_API_KEY` is set.
 - Without an LLM configured, the bot still stores shorts and creates placeholder cards, but the Korean meaning fields will not be high quality.
 - The first message is intentionally short. Users can tap a number button or send a number to open the deep-dive card for that expression.
+- On Render, the bot runs in polling mode because Telegram webhook POST delivery was unreliable on this deployment path.

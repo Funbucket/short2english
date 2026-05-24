@@ -93,6 +93,7 @@ class Config:
     telegram_bot_token: str
     telegram_webhook_url: str
     telegram_webhook_secret: str
+    telegram_bot_mode: str
     supabase_url: str
     supabase_service_role_key: str
     openai_api_key: str
@@ -106,6 +107,7 @@ class Config:
 
 
 def load_config() -> Config:
+    default_bot_mode = "polling" if env("RENDER_EXTERNAL_URL", "") else "webhook"
     return Config(
         port=int_env("PORT", 3000),
         telegram_bot_token=require_env("TELEGRAM_BOT_TOKEN"),
@@ -115,6 +117,7 @@ def load_config() -> Config:
             render_external_url=env("RENDER_EXTERNAL_URL", "") or "",
         ),
         telegram_webhook_secret=env("TELEGRAM_WEBHOOK_SECRET", "") or "",
+        telegram_bot_mode=env("TELEGRAM_BOT_MODE", default_bot_mode) or default_bot_mode,
         supabase_url=require_env("SUPABASE_URL"),
         supabase_service_role_key=require_env("SUPABASE_SERVICE_ROLE_KEY"),
         openai_api_key=env("OPENAI_API_KEY", "") or "",

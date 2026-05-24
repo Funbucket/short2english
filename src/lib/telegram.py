@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlencode
 
 from src.lib.http import request
 
@@ -44,6 +45,27 @@ class TelegramClient:
         if secret_token:
             payload["secret_token"] = secret_token
         return self._request("setWebhook", payload)
+
+    def delete_webhook(self, *, drop_pending_updates: bool = False) -> object:
+        payload: dict[str, object] = {"drop_pending_updates": drop_pending_updates}
+        return self._request("deleteWebhook", payload)
+
+    def get_updates(self, *, offset: int | None = None, timeout: int = 30, limit: int = 100) -> list[dict]:
+        query: dict[str, object] = {"timeout": timeout, "limit": limit}
+        if offset is not None:
+            query["offset"] = offset
+        response = request(
+            "GET",
+            f"{self.api_url('getUpdates')}?{urlencode(query)}",
+            headers={"content-type": "application/json"},
+            timeout=float(timeout) + 5.0,
+        )
+        data = json.loads(response.text or "{}")
+        if response.status >= 400 or data.get("ok") is False:
+            description = data.get("description") or "Telegram getUpdates failed"
+            raise RuntimeError(description)
+        result = data.get("result") or []
+        return result if isinstance(result, list) else []
 
 
 def chunk_text_for_telegram(text: str, max_len: int = 3500) -> list[str]:
