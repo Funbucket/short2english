@@ -6,7 +6,7 @@ import threading
 import time
 
 from src.lib.telegram import TelegramClient, build_inline_keyboard, send_long_message
-from src.lib.transcript import TranscriptUnavailableError, fetch_transcript
+from src.lib.transcript import TranscriptProviderError, TranscriptUnavailableError, fetch_transcript
 from src.lib.youtube import extract_video_id
 from src.services.llm import generate_expression_deep_dive, generate_learning_cards
 from src.services.messages import (
@@ -100,7 +100,7 @@ def format_processing_error(exc: Exception) -> str:
             ]
         )
 
-    if isinstance(exc, TranscriptUnavailableError) or "No transcript track found for this video" in message:
+    if isinstance(exc, TranscriptUnavailableError):
         return "\n".join(
             [
                 "이 영상은 자동으로 읽을 수 있는 자막/전사 트랙을 찾지 못했습니다.",
@@ -112,28 +112,53 @@ def format_processing_error(exc: Exception) -> str:
                 "",
                 "해결:",
                 "- 자막이 있는 다른 Shorts를 보내주세요.",
-                "- 같은 영상은 나중에 다시 시도해보세요.",
+                "- 잠시 후 다시 시도해보세요.",
             ]
         )
 
-    if (
-        "YouTube가 이 영상의 자막/오디오 접근을 차단했습니다" in message
-        or "YouTube blocked access to this video" in message
-        or "RequestBlocked" in message
-        or "IpBlocked" in message
-    ):
+    if isinstance(exc, TranscriptProviderError):
+        if "YOUTUBETRANSCRIPT_API_KEY" in message or exc.status == 401 or "invalid_api_key" in message:
+            return "\n".join(
+                [
+                    "전사 API 키가 없거나 잘못되었습니다.",
+                    "",
+                    "해결:",
+                    "- `YOUTUBETRANSCRIPT_API_KEY` 를 다시 넣어주세요.",
+                    "- Render 재배포 후 다시 시도하세요.",
+                ]
+            )
+
+        if exc.status == 402 or "payment_required" in message:
+            return "\n".join(
+                [
+                    "전사 API 크레딧이 부족합니다.",
+                    "",
+                    "해결:",
+                    "- YouTubeTranscript.dev 대시보드에서 크레딧을 충전하세요.",
+                    "- 충전 후 다시 시도하세요.",
+                ]
+            )
+
+        if exc.status == 429 or "rate_limit" in message:
+            return "\n".join(
+                [
+                    "전사 API 요청이 너무 많습니다.",
+                    "",
+                    "해결:",
+                    "- 잠시 후 다시 시도하세요.",
+                    "- 요청 간격을 조금 늘리세요.",
+                ]
+            )
+
         return "\n".join(
             [
-                "이 영상은 YouTube가 자막/오디오 접근을 차단해서 자동 처리할 수 없습니다.",
+                "전사 API에서 영상을 처리하지 못했습니다.",
                 "",
                 "원인:",
-                "- YouTube가 봇 접근을 막음",
-                "- 해당 Shorts가 외부 전사를 허용하지 않음",
+                "- YouTubeTranscript.dev 서비스가 일시적으로 실패함",
                 "",
                 "해결:",
-                "- 다른 Shorts를 보내주세요.",
-                "- 안정적으로 쓰려면 residential proxy를 연결하세요.",
-                "- `YOUTUBE_PROXY_URL` 또는 `YOUTUBE_HTTP_PROXY_URL` / `YOUTUBE_HTTPS_PROXY_URL` 를 설정하세요.",
+                "- 잠시 후 다시 시도하세요.",
             ]
         )
 
@@ -142,8 +167,6 @@ def format_processing_error(exc: Exception) -> str:
             "Short 처리를 완료하지 못했습니다.",
             "",
             message,
-            "",
-            "YouTube가 Render IP를 막는 경우에는 proxy 설정이 필요합니다.",
         ]
     )
 
@@ -196,16 +219,6 @@ def get_summary_cards(short: dict, cards: list[dict]) -> list[dict]:
     if not cards:
         return []
     return cards[:3]
-
-
-def should_retry_existing_short(existing_short: dict) -> bool:
-    if not existing_short:
-        return False
-    if existing_short.get("processing_status") == "failed":
-        return False
-    if str(existing_short.get("error_message") or "").strip():
-        return False
-    return True
 
 
 def send_summary_cards(*, bot: TelegramClient, chat_id, short: dict, cards: list[dict], source: str | None = None):
@@ -320,15 +333,6 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
         if existing_short:
             cards = get_short_cards(db, existing_short["id"])
             if not cards:
-                if not should_retry_existing_short(existing_short):
-                    send_long_message(
-                        bot,
-                        chat_id,
-                        format_processing_error(
-                            RuntimeError(str(existing_short.get("error_message") or "이전 처리에 실패했습니다."))
-                        ),
-                    )
-                    return
                 send(bot, chat_id, "저장된 카드가 비어 있어서 다시 처리 중입니다. 잠시만 기다려주세요.")
                 target_short = existing_short
                 reuse_existing_short = True
@@ -350,10 +354,7 @@ def process_short_url_job(*, config, db, bot: TelegramClient, telegram_message: 
             preferred_languages=config.transcript_languages,
             openai_api_key=config.openai_api_key,
             transcription_model=config.transcription_model,
-            youtube_proxy_url=config.youtube_proxy_url,
-            youtube_http_proxy_url=config.youtube_http_proxy_url,
-            youtube_https_proxy_url=config.youtube_https_proxy_url,
-            youtube_cookies_file=config.youtube_cookies_file,
+            youtube_transcript_api_key=config.youtubetranscript_api_key,
         )
         send(bot, chat_id, "학습 카드를 만드는 중입니다.")
         generated = generate_learning_cards(

@@ -22,6 +22,8 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: YOUTUBETRANSCRIPT_API_KEY
+        sync: false
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
       - key: TRANSCRIPTION_MODEL
@@ -34,11 +36,3 @@ services:
         sync: false
       - key: LLM_MODEL
         value: gpt-4o-mini
-      - key: YOUTUBE_PROXY_URL
-        sync: false
-      - key: YOUTUBE_HTTP_PROXY_URL
-        sync: false
-      - key: YOUTUBE_HTTPS_PROXY_URL
-        sync: false
-      - key: YOUTUBE_COOKIES_FILE
-        sync: false

@@ -5,11 +5,10 @@ from src.app import (
     format_processing_error,
     mark_update_seen,
     parse_expression_selection,
-    should_retry_existing_short,
 )
 from src.lib.telegram import chunk_text_for_telegram
 from src.lib.text import clean_transcript_text
-from src.lib.transcript import TranscriptUnavailableError
+from src.lib.transcript import TranscriptProviderError, TranscriptUnavailableError
 from src.services.llm import safe_json_loads
 from src.services.messages import format_deep_dive_message
 
@@ -86,32 +85,22 @@ class HelperTest(unittest.TestCase):
             TranscriptUnavailableError(
                 video_id="g6671WnPUsQ",
                 youtube_url="https://www.youtube.com/shorts/g6671WnPUsQ",
-                title="test",
-                tried_sources=[
-                    "youtube_transcript_api",
-                    "youtube_page_caption_tracks",
-                ],
+                message="이 영상은 자동으로 읽을 수 있는 자막/전사 트랙을 찾지 못했습니다.",
             )
         )
         self.assertIn("자동으로 읽을 수 있는 자막/전사 트랙을 찾지 못했습니다.", message)
         self.assertIn("다른 Shorts를 보내주세요", message)
 
-    def test_should_retry_existing_short_skips_failed_records(self):
-        self.assertFalse(
-            should_retry_existing_short(
-                {"processing_status": "failed", "error_message": "YouTube blocked access to this video"}
+    def test_format_processing_error_detects_transcript_api_key_issue(self):
+        message = format_processing_error(
+            TranscriptProviderError(
+                status=401,
+                code="invalid_api_key",
+                message="YouTubeTranscript.dev API returned 401 invalid_api_key: Missing or invalid API key",
             )
         )
-        self.assertFalse(
-            should_retry_existing_short(
-                {"processing_status": "completed", "error_message": "YouTube blocked access to this video"}
-            )
-        )
-        self.assertTrue(
-            should_retry_existing_short(
-                {"processing_status": "completed", "error_message": ""}
-            )
-        )
+        self.assertIn("전사 API 키가 없거나 잘못되었습니다.", message)
+        self.assertIn("YOUTUBETRANSCRIPT_API_KEY", message)
 
 
 if __name__ == "__main__":

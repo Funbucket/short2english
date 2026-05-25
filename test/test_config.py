@@ -52,11 +52,13 @@ class TelegramBotModeTest(unittest.TestCase):
         original_token = environ.get("TELEGRAM_BOT_TOKEN")
         original_supabase_url = environ.get("SUPABASE_URL")
         original_supabase_key = environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        original_transcript_key = environ.get("YOUTUBETRANSCRIPT_API_KEY")
 
         try:
             environ["TELEGRAM_BOT_TOKEN"] = "token"
             environ["SUPABASE_URL"] = "https://example.supabase.co"
             environ["SUPABASE_SERVICE_ROLE_KEY"] = "service-role-key"
+            environ["YOUTUBETRANSCRIPT_API_KEY"] = "api-key"
             config = load_config()
             self.assertEqual(config.telegram_bot_mode, "webhook")
         finally:
@@ -74,6 +76,11 @@ class TelegramBotModeTest(unittest.TestCase):
                 environ.pop("SUPABASE_SERVICE_ROLE_KEY", None)
             else:
                 environ["SUPABASE_SERVICE_ROLE_KEY"] = original_supabase_key
+
+            if original_transcript_key is None:
+                environ.pop("YOUTUBETRANSCRIPT_API_KEY", None)
+            else:
+                environ["YOUTUBETRANSCRIPT_API_KEY"] = original_transcript_key
 
 
 if __name__ == "__main__":
